@@ -2,7 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const bodyParser = require('body-parser');
 const cors = require('cors');
-const SessionManager = require('./sessionManager');
+const pino = require('pino');
+const VenomManager = require('./venomManager');
+const wrapper = require('./wrapper');
+
+const log = pino({ level: process.env.LOG_LEVEL || 'info' });
 
 const PORT = process.env.SERVER_PORT ? Number(process.env.SERVER_PORT) : 8080;
 const API_KEY = process.env.SECRET_KEY || 'secret';
@@ -12,88 +16,37 @@ const app = express();
 app.use(cors());
 app.use(bodyParser.json({ limit: '20mb' }));
 
-const sessions = new SessionManager({ storagePath: SESSION_DIR });
-
+// simple API key middleware
 function authMiddleware(req, res, next) {
+  // allow health & version without key for convenience
+  if (req.path === '/' || req.path.startsWith('/version') || req.path.startsWith('/server/status')) return next();
   const key = req.header('x-api-key') || req.query.apiKey || req.body.apiKey;
-  if (key && key === API_KEY) return next();
-  return res.status(401).json({ error: 'Unauthorized - invalid API key' });
+  if (!key || key !== API_KEY) {
+    return res.status(401).json({ error: 'Unauthorized - invalid API key' });
+  }
+  return next();
 }
+app.use(authMiddleware);
 
-/** Health */
-app.get('/', (_req, res) => {
-  res.json({ status: 'Evolution API (Venom) running', version: '1.0.0' });
+// instantiate venom manager and attach to app
+const venom = new VenomManager({ storagePath: SESSION_DIR });
+app.locals.venom = venom;
+
+// health & version endpoints used by n8n
+app.get('/', (_req, res) => res.json({ status: 'ok', message: 'Evolution API (Venom) running' }));
+app.get('/version', (_req, res) => res.json({ version: '2.0.0', name: 'evolution-api-venom' }));
+app.get('/server/status', (_req, res) => {
+  const list = venom.list();
+  res.json({ status: 'ok', instancesCount: list.length });
 });
 
-/** Create instance */
-app.post('/instance/create', authMiddleware, async (req, res) => {
-  try {
-    const { id, name, webhook } = req.body || {};
-    if (!id) return res.status(400).json({ error: 'Missing id in body' });
-    const info = await sessions.create(id, { name: name || id, webhook });
-    return res.json(info);
-  } catch (err) {
-    return res.status(500).json({ error: err?.message || String(err) });
-  }
-});
+// mount wrapper
+app.use('/', wrapper);
 
-/** Get QR */
-app.get('/instance/:id/qr', authMiddleware, async (req, res) => {
-  const id = req.params.id;
-  const st = sessions.getState(id);
-  if (!st) return res.status(404).json({ error: 'Instance not found' });
-  return res.json({ id, status: st.status, qr: st.qr });
-});
-
-/** Status */
-app.get('/instance/:id/status', authMiddleware, async (req, res) => {
-  const id = req.params.id;
-  const st = sessions.getState(id);
-  if (!st) return res.status(404).json({ error: 'Instance not found' });
-  return res.json({ id, status: st.status, info: st.info || null });
-});
-
-/** Send text message */
-app.post('/instance/:id/send-message', authMiddleware, async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { to, text } = req.body || {};
-    if (!to || !text) return res.status(400).json({ error: 'Missing to or text' });
-    const result = await sessions.sendText(id, to, text);
-    return res.json({ ok: true, result });
-  } catch (err) {
-    return res.status(500).json({ error: err?.message || String(err) });
-  }
-});
-
-/** Send media by URL */
-app.post('/instance/:id/send-media', authMiddleware, async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { to, url, caption } = req.body || {};
-    if (!to || !url) return res.status(400).json({ error: 'Missing to or url' });
-    const result = await sessions.sendMediaByUrl(id, to, url, caption);
-    return res.json({ ok: true, result });
-  } catch (err) {
-    return res.status(500).json({ error: err?.message || String(err) });
-  }
-});
-
-/** Delete instance */
-app.delete('/instance/:id', authMiddleware, async (req, res) => {
-  try {
-    const id = req.params.id;
-    await sessions.delete(id);
-    return res.json({ id, deleted: true });
-  } catch (err) {
-    return res.status(500).json({ error: err?.message || String(err) });
-  }
-});
-
-/** Start server + restore sessions */
+// start
 (async () => {
-  await sessions.init();
+  await venom.init();
   app.listen(PORT, () => {
-    console.log(`⚡ Evolution API (Venom) running on port ${PORT}`);
+    log.info(`⚡ Evolution API (Venom) running on port ${PORT}`);
   });
 })();
