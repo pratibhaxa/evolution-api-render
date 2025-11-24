@@ -1,24 +1,20 @@
-import express from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import bodyParser from 'body-parser';
-import { SessionManager } from './sessionManager';
+require('dotenv').config();
+const express = require('express');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const SessionManager = require('./sessionManager');
 
-dotenv.config();
-
-const PORT = process.env.SERVER_PORT ? parseInt(process.env.SERVER_PORT, 10) : 8080;
+const PORT = process.env.SERVER_PORT ? Number(process.env.SERVER_PORT) : 8080;
 const API_KEY = process.env.SECRET_KEY || 'secret';
+const SESSION_DIR = process.env.SESSION_DIR || './sessions';
+
 const app = express();
 app.use(cors());
-app.use(bodyParser.json({ limit: '10mb' }));
+app.use(bodyParser.json({ limit: '20mb' }));
 
-const sessions = new SessionManager({
-  storagePath: process.env.SESSION_DIR || './sessions',
-  webhookBase: process.env.WEBHOOK_BASE || ''
-});
+const sessions = new SessionManager({ storagePath: SESSION_DIR });
 
-/** Middleware: tiny API key check */
-function authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction) {
+function authMiddleware(req, res, next) {
   const key = req.header('x-api-key') || req.query.apiKey || req.body.apiKey;
   if (key && key === API_KEY) return next();
   return res.status(401).json({ error: 'Unauthorized - invalid API key' });
@@ -26,7 +22,7 @@ function authMiddleware(req: express.Request, res: express.Response, next: expre
 
 /** Health */
 app.get('/', (_req, res) => {
-  res.json({ status: 'Evolution API clone running', version: '2.1.0' });
+  res.json({ status: 'Evolution API (Venom) running', version: '1.0.0' });
 });
 
 /** Create instance */
@@ -36,19 +32,17 @@ app.post('/instance/create', authMiddleware, async (req, res) => {
     if (!id) return res.status(400).json({ error: 'Missing id in body' });
     const info = await sessions.create(id, { name: name || id, webhook });
     return res.json(info);
-  } catch (err: any) {
+  } catch (err) {
     return res.status(500).json({ error: err?.message || String(err) });
   }
 });
 
-/** Get QR (base64 PNG) */
+/** Get QR */
 app.get('/instance/:id/qr', authMiddleware, async (req, res) => {
   const id = req.params.id;
   const st = sessions.getState(id);
   if (!st) return res.status(404).json({ error: 'Instance not found' });
-  // qrBase64 if available
-  const qr = st.qr || null;
-  return res.json({ id, status: st.status, qr });
+  return res.json({ id, status: st.status, qr: st.qr });
 });
 
 /** Status */
@@ -66,21 +60,21 @@ app.post('/instance/:id/send-message', authMiddleware, async (req, res) => {
     const { to, text } = req.body || {};
     if (!to || !text) return res.status(400).json({ error: 'Missing to or text' });
     const result = await sessions.sendText(id, to, text);
-    return res.json(result);
-  } catch (err: any) {
+    return res.json({ ok: true, result });
+  } catch (err) {
     return res.status(500).json({ error: err?.message || String(err) });
   }
 });
 
-/** Send media by URL (simple) */
+/** Send media by URL */
 app.post('/instance/:id/send-media', authMiddleware, async (req, res) => {
   try {
     const id = req.params.id;
     const { to, url, caption } = req.body || {};
     if (!to || !url) return res.status(400).json({ error: 'Missing to or url' });
     const result = await sessions.sendMediaByUrl(id, to, url, caption);
-    return res.json(result);
-  } catch (err: any) {
+    return res.json({ ok: true, result });
+  } catch (err) {
     return res.status(500).json({ error: err?.message || String(err) });
   }
 });
@@ -91,22 +85,15 @@ app.delete('/instance/:id', authMiddleware, async (req, res) => {
     const id = req.params.id;
     await sessions.delete(id);
     return res.json({ id, deleted: true });
-  } catch (err: any) {
+  } catch (err) {
     return res.status(500).json({ error: err?.message || String(err) });
   }
 });
 
-/** Raw webhook receiver (not strictly needed, internal) */
-app.post('/instance/:id/webhook', async (req, res) => {
-  // used internally by session manager to forward events to configured webhook
-  return res.json({ ok: true });
-});
-
-/** Start session manager (it will restore sessions) */
+/** Start server + restore sessions */
 (async () => {
   await sessions.init();
   app.listen(PORT, () => {
-    // eslint-disable-next-line no-console
-    console.log(`⚡ Evolution API running on port ${PORT}`);
+    console.log(`⚡ Evolution API (Venom) running on port ${PORT}`);
   });
 })();
