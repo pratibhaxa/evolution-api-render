@@ -1,11 +1,12 @@
 {
   "name": "evolution-api-render",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "main": "dist/main.js",
   "type": "commonjs",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/main.js"
+    "start": "node dist/main.js",
+    "dev": "ts-node src/main.ts"
   },
   "dependencies": {
     "@adiwajshing/baileys": "5.0.0",
@@ -14,9 +15,14 @@
     "dotenv": "^16.3.1",
     "body-parser": "^1.20.2",
     "axios": "^1.6.0",
-    "pino": "^9.0.0"
+    "pino": "^9.0.0",
+    "ws": "^8.13.0",
+    "file-safe": "^1.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "@types/express": "^4.17.17",
+    "@types/node": "^20.4.2",
+    "ts-node": "^10.9.1"
   }
 }
